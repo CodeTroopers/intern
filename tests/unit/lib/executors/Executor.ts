@@ -41,7 +41,7 @@ registerSuite('lib/executors/Executor', function () {
 					scripts[mod]();
 				}
 			});
-			return Promise.resolve<void>();
+			return Promise.resolve();
 		});
 		executor.registerLoader((_config: Config) => Promise.resolve(testLoader));
 		(<any>executor).testLoader = testLoader;
@@ -74,7 +74,7 @@ registerSuite('lib/executors/Executor', function () {
 			return mockRequire(require, 'src/lib/executors/Executor', {
 				'src/lib/common/ErrorFormatter': { default: MockErrorFormatter },
 				'chai': mockChai,
-				'@dojo/core/global': {
+				'@dojo/shim/global': {
 					default: {
 						console: mockConsole,
 						'__coverage__': {}
@@ -138,12 +138,12 @@ registerSuite('lib/executors/Executor', function () {
 					browser: {
 						plugins: [],
 						reporters: [],
+						require: [],
 						suites: []
 					},
 					coverageVariable: '__coverage__',
 					debug: false,
 					defaultTimeout: 30000,
-					excludeInstrumentation: /(?:node_modules|browser|tests)\//,
 					filterErrorStack: false,
 					grep: new RegExp(''),
 					loader: { script: 'default' },
@@ -151,10 +151,12 @@ registerSuite('lib/executors/Executor', function () {
 					node: {
 						plugins: [],
 						reporters: [],
+						require: [],
 						suites: []
 					},
 					plugins: [],
 					reporters: [],
+					require: [],
 					sessionId: '',
 					suites: <string[]>[]
 				};
@@ -204,13 +206,15 @@ registerSuite('lib/executors/Executor', function () {
 					assert.deepEqual<any>(executor.config.node, {
 						suites: ['foo'],
 						plugins: [{ script: 'bar' }],
-						reporters: []
+						reporters: [],
+						require: []
 					}, 'values should have been set on node');
 					executor.configure(<any>{ node: { 'suites+': ['bif'], plugins: ['buf'], reporters: ['bof'] } });
 					assert.deepEqual<any>(executor.config.node, {
 						suites: ['foo', 'bif'],
 						plugins: [{ script: 'buf' }],
-						reporters: [{ name: 'bof' }]
+						reporters: [{ name: 'bof' }],
+						require: []
 					}, 'values should have been mixed into node');
 				},
 
@@ -250,12 +254,6 @@ registerSuite('lib/executors/Executor', function () {
 							test('defaultTimeout', 'foo', '5', 5, /Non-numeric value/);
 						},
 
-						excludeInstrumentation() {
-							test('excludeInstrumentation', 5, true, true, /Invalid value/);
-							test('excludeInstrumentation', 5, /foo/, /foo/, /Invalid value/);
-							test('excludeInstrumentation', 5, 'foo', /foo/, /Invalid value/);
-						},
-
 						grep() {
 							test('grep', 5, 'foo', /foo/, /Non-regexp/);
 							test('grep', 5, /foo/, /foo/, /Non-regexp/);
@@ -271,9 +269,9 @@ registerSuite('lib/executors/Executor', function () {
 						},
 
 						'environment resources'() {
-							test('node', 5, {}, { plugins: [], reporters: [], suites: [] }, /Non-object/);
-							test('browser', 5, {}, { plugins: [], reporters: [], suites: [] }, /Non-object/);
-							test('node', 5, { suites: 'foo' }, { plugins: [], reporters: [], suites: ['foo'] }, /Non-object/);
+							test('node', 5, {}, { plugins: [], reporters: [], require: [], suites: [] }, /Non-object/);
+							test('browser', 5, {}, { plugins: [], reporters: [], require: [], suites: [] }, /Non-object/);
+							test('node', 5, { suites: 'foo' }, { plugins: [], reporters: [], require: [], suites: ['foo'] }, /Non-object/);
 						}
 					};
 				})()
@@ -438,12 +436,12 @@ registerSuite('lib/executors/Executor', function () {
 						'    "browser": {\n' +
 						'        "plugins": [],\n' +
 						'        "reporters": [],\n' +
+						'        "require": [],\n' +
 						'        "suites": []\n' +
 						'    },\n' +
 						'    "coverageVariable": "__coverage__",\n' +
 						'    "debug": false,\n' +
 						'    "defaultTimeout": 30000,\n' +
-						'    "excludeInstrumentation": {},\n' +
 						'    "filterErrorStack": false,\n' +
 						'    "grep": {},\n' +
 						'    "internPath": "",\n' +
@@ -454,10 +452,12 @@ registerSuite('lib/executors/Executor', function () {
 						'    "node": {\n' +
 						'        "plugins": [],\n' +
 						'        "reporters": [],\n' +
+						'        "require": [],\n' +
 						'        "suites": []\n' +
 						'    },\n' +
 						'    "plugins": [],\n' +
 						'    "reporters": [],\n' +
+						'    "require": [],\n' +
 						'    "sessionId": "",\n' +
 						'    "showConfig": true,\n' +
 						'    "suites": []\n' +

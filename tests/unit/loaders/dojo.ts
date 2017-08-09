@@ -1,5 +1,4 @@
-import global from '@dojo/core/global';
-import Promise from '@dojo/shim/Promise';
+import global from '@dojo/shim/global';
 import { spy } from 'sinon';
 import { LoaderInit } from 'src/lib/executors/Executor';
 
@@ -44,6 +43,7 @@ registerSuite('loaders/dojo', function () {
 		},
 
 		after() {
+			global.intern = originalIntern;
 			removeMocks();
 		},
 

@@ -6,12 +6,13 @@ import Task from '@dojo/core/async/Task';
 import { sync as glob, hasMagic } from 'glob';
 import { mixin } from '@dojo/core/lang';
 import { parse } from 'shell-quote';
-import global from '@dojo/core/global';
+import global from '@dojo/shim/global';
 
 const process = global.process;
 
 /**
- * Expand a list of glob patterns into a flat file list
+ * Expand a list of glob patterns into a flat file list. Patterns may be simple file paths or glob patterns. Patterns
+ * starting with '!' denote exclusions. Note that exclusion rules will not apply to simple paths.
  */
 export function expandFiles(patterns?: string[] | string) {
 	if (!patterns) {
@@ -20,14 +21,28 @@ export function expandFiles(patterns?: string[] | string) {
 	else if (!Array.isArray(patterns)) {
 		patterns = [patterns];
 	}
-	return patterns.map(pattern => {
-		if (hasMagic(pattern)) {
-			return glob(pattern);
+
+	const excludes: string[] = [];
+	const includes: string[] = [];
+	const paths: string[] = [];
+
+	for (let pattern of patterns) {
+		if (pattern[0] === '!') {
+			excludes.push(pattern.slice(1));
 		}
-		return [pattern];
-	}).reduce((allFiles, files) => {
-		return allFiles.concat(files);
-	}, []);
+		else {
+			if (hasMagic(pattern)) {
+				includes.push(pattern);
+			}
+			else {
+				paths.push(pattern);
+			}
+		}
+	}
+
+	return includes
+		.map(pattern => glob(pattern, { ignore: excludes }))
+		.reduce((allFiles, files) => allFiles.concat(files), paths);
 }
 
 /**

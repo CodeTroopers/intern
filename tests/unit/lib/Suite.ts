@@ -2,7 +2,6 @@ import Suite, { SuiteOptions, SuiteProperties } from 'src/lib/Suite';
 import Test from 'src/lib/Test';
 import { InternError } from 'src/lib/types';
 
-import Promise from '@dojo/shim/Promise';
 import Task, { State } from '@dojo/core/async/Task';
 
 import { mockExecutor, mockRemoteAndSession } from '../../support/unit/mocks';
@@ -275,6 +274,28 @@ function createTimeoutTest(method: lifecycleMethod): _TestFunction {
 	};
 }
 
+/**
+ * Verify that lifecycle methods are called with the expected arguments
+ */
+function createArgsTest(method: lifecycleMethod): _TestFunction {
+	return function () {
+		const suite = createSuite({
+			[method]: (...args: any[]) => {
+				if (/Each$/.test(method)) {
+					assert.instanceOf(args[0], Test);
+					assert.instanceOf(args[1], Suite);
+				}
+				else {
+					assert.instanceOf(args[0], Suite);
+				}
+			},
+			tests: [ new Test({ name: 'foo', test: () => {} }) ]
+		});
+
+		return suite.run();
+	};
+}
+
 function createLifecycleTests(name: lifecycleMethod, asyncTest: TestWrapper, tests: { [name: string]: _TestFunction }) {
 	return {
 		tests: {
@@ -287,6 +308,7 @@ function createLifecycleTests(name: lifecycleMethod, asyncTest: TestWrapper, tes
 			'async rejects': createThrowsTest(name, { async: true }),
 			'async timeout': createTimeoutTest(name),
 			'promise rejects': createThrowsTest(name, { promise: true }),
+			arguments: createArgsTest(name),
 			...tests
 		}
 	};
@@ -677,7 +699,7 @@ registerSuite('lib/Suite', {
 					actualLifecycle.push(test.name + 'OuterBeforeEach');
 					dfd.resolve();
 				}, 100);
-				return dfd.promise;
+				return dfd.promise.then(() => {});
 			},
 			tests: [ outerTest ],
 			afterEach(test) {
@@ -703,7 +725,7 @@ registerSuite('lib/Suite', {
 					actualLifecycle.push(test.name + 'InnerAfterEach');
 					dfd.resolve();
 				}, 100);
-				return dfd.promise;
+				return dfd.promise.then(() => {});
 			},
 			after: function () {
 				actualLifecycle.push('innerAfter');

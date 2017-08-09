@@ -1,6 +1,6 @@
 import Suite from '../Suite';
 import Test from '../Test';
-import { deepMixin } from '@dojo/core/lang';
+import { deepMixin, duplicate } from '@dojo/core/lang';
 import { Handle } from '@dojo/interfaces/core';
 import Task, { isThenable, isTask, State } from '@dojo/core/async/Task';
 import ErrorFormatter, { ErrorFormatOptions } from '../common/ErrorFormatter';
@@ -11,10 +11,9 @@ import { getInterface as getTddInterface, TddInterface } from '../interfaces/tdd
 import { getInterface as getBddInterface, BddInterface } from '../interfaces/bdd';
 import { getInterface as getBenchmarkInterface, BenchmarkInterface } from '../interfaces/benchmark';
 import { BenchmarkReporterOptions } from '../reporters/Benchmark';
-import Promise from '@dojo/shim/Promise';
 import * as chai from 'chai';
-import { RuntimeEnvironment } from '../types';
-import global from '@dojo/core/global';
+import { InternError, RuntimeEnvironment } from '../types';
+import global from '@dojo/shim/global';
 
 const console: Console = global.console;
 
@@ -30,7 +29,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 	protected _hasTestErrors = false;
 	protected _interfaces: { [name: string]: any };
 	protected _loader: Loader;
-	protected _loaderConfig: any;
+	protected _loaderOptions: any;
 	protected _loaderInit: Promise<Loader>;
 	protected _autoLoadingPlugins: boolean;
 	protected _loadingPlugins: { name: string, init: Task<void> }[];
@@ -40,7 +39,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 	protected _reporters: Reporter[];
 	protected _runTask: Task<void>;
 
-	constructor(config?: Partial<C>) {
+	constructor(options?: { [key in keyof C]?: any }) {
 		this._config = <C>{
 			bail: false,
 			baseline: false,
@@ -48,12 +47,12 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 			browser: {
 				plugins: <PluginDescriptor[]>[],
 				reporters: <ReporterDescriptor[]>[],
+				require: <string[]>[],
 				suites: <string[]>[]
 			},
 			coverageVariable: '__coverage__',
 			debug: false,
 			defaultTimeout: 30000,
-			excludeInstrumentation: /(?:node_modules|browser|tests)\//,
 			filterErrorStack: false,
 			grep: new RegExp(''),
 			loader: { script: 'default' },
@@ -61,29 +60,31 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 			node: {
 				plugins: <PluginDescriptor[]>[],
 				reporters: <ReporterDescriptor[]>[],
+				require: <string[]>[],
 				suites: <string[]>[]
 			},
 			plugins: <PluginDescriptor[]>[],
 			reporters: <ReporterDescriptor[]>[],
+			require: <string[]>[],
 			sessionId: '',
 			suites: <string[]>[]
 		};
-
-		if (config) {
-			this.configure(config);
-		}
 
 		this._listeners = {};
 		this._reporters = [];
 		this._plugins = {};
 		this._loadingPlugins = [];
 
-		this.registerPlugin('interface.object', () => getObjectInterface(this));
-		this.registerPlugin('interface.tdd', () => getTddInterface(this));
-		this.registerPlugin('interface.bdd', () => getBddInterface(this));
-		this.registerPlugin('interface.benchmark', () => getBenchmarkInterface(this));
+		this.registerInterface('object', getObjectInterface(this));
+		this.registerInterface('tdd', getTddInterface(this));
+		this.registerInterface('bdd', getBddInterface(this));
+		this.registerInterface('benchmark', getBenchmarkInterface(this));
 
 		this.registerPlugin('chai', () => chai);
+
+		if (options) {
+			this.configure(options);
+		}
 
 		this._rootSuite = new Suite({ executor: this });
 
@@ -146,16 +147,13 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 	}
 
 	/**
-	 * Update this executor's configuration with a Config object.
-	 *
-	 * Note that non-object properties will replace existing properties. Object propery values will be deeply mixed into
-	 * any existing value.
+	 * Update this executor's configuration.
 	 */
-	configure(config: Partial<C>) {
-		config = config || {};
-		Object.keys(config).forEach((key: keyof C) => {
+	configure(options: { [key in keyof C]?: any }) {
+		options = options || {};
+		Object.keys(options).forEach((key: keyof C) => {
 			const { name, addToExisting } = this._evalProperty(key);
-			this._processOption(<keyof C>name, config[key], addToExisting);
+			this._processOption(<keyof C>name, options[key], addToExisting);
 		});
 	}
 
@@ -192,19 +190,45 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 			});
 		}
 
+		let error: InternError | undefined;
+		if (eventName === 'error') {
+			error = <InternError>data;
+		}
+
 		if (notifications.length === 0) {
-			// Report errors and warnings when no listeners are registered
-			if (eventName === 'error') {
-				console.error(this.formatError(<any>data));
+			// Report errors, warnings, deprecation messages when no listeners are registered
+			if (error) {
+				error.reported = true;
+				console.error(this.formatError(error));
 			}
 			else if (eventName === 'warning') {
 				console.warn(`WARNING: ${data}`);
+			}
+			else if (eventName === 'deprecated') {
+				const message = <DeprecationMessage>data;
+				console.warn(`WARNING: ${message.original} is deprecated, use ${message.replacement} instead.`);
 			}
 
 			return Task.resolve();
 		}
 
-		return Task.all<void>(notifications);
+		return Task.all<void>(notifications)
+			.then(() => {
+				if (error) {
+					error.reported = true;
+				}
+			});
+	}
+
+	/**
+	 * Get a registered interface plugin
+	 */
+	getInterface(name: 'object'): ObjectInterface;
+	getInterface(name: 'tdd'): TddInterface;
+	getInterface(name: 'bdd'): BddInterface;
+	getInterface(name: 'benchmark'): BenchmarkInterface;
+	getInterface(name: string): any {
+		return this.getPlugin(`interface.${name}`);
 	}
 
 	/**
@@ -291,11 +315,19 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 	}
 
 	/**
+	 * Register an interface plugin
+	 */
+	registerInterface(name: string, iface: any) {
+		this.registerPlugin(`interface.${name}`, () => iface);
+	}
+
+	/**
 	 * Set the loader script that will be used to load plugins and suites.
 	 * will handle the loading of test suites.
 	 */
 	registerLoader(init: LoaderInit) {
-		this._loaderInit = Promise.resolve(init(this._loaderConfig));
+		const options = this._loaderOptions ? duplicate(this._loaderOptions) : {};
+		this._loaderInit = Promise.resolve(init(options));
 	}
 
 	/**
@@ -308,13 +340,13 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 		const pluginName = typeof init === 'undefined' ? type : `${type}.${name}`;
 		const pluginInit = typeof init === 'undefined' ? <PluginInitializer>name : init;
 		const options = this._loadingPluginOptions;
-		const result = options ? pluginInit(options) : pluginInit();
+		const result = options ? pluginInit(duplicate(options)) : pluginInit();
 		if (isThenable(result)) {
 			// If the result is thenable, push it on the loading queue
 			this._loadingPlugins.push({
 				name: pluginName,
-				init: new Task<void>(
-					(resolve, reject) => result.then(() => { resolve(); }, reject),
+				init: new Task<any>(
+					(resolve, reject) => result.then(value => resolve(value), reject),
 					() => { isTask(result) && result.cancel(); }
 				)
 			});
@@ -324,6 +356,13 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 			// If the result is not thenable, immediately add it to the plugins list
 			this._assignPlugin(pluginName, result);
 		}
+	}
+
+	/**
+	 * Register a reporter plugin
+	 */
+	registerReporter(name: string, Ctor: typeof Reporter) {
+		this.registerPlugin('reporter', name, () => Ctor);
 	}
 
 	/**
@@ -367,6 +406,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 					let currentTask: Task<void>;
 
 					this._runTask = this._runTask
+						.then(() => this._loadRequires())
 						.then(() => this._loadLoader())
 						.then(() => this._loadPlugins())
 						.then(() => this._loadSuites())
@@ -424,14 +464,24 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 							if (runError) {
 								throw runError;
 							}
+
+							let message = '';
+
 							// If there were no run errors but any suites had errors, throw an error to reject the run
 							// task.
 							if (this._hasSuiteErrors) {
-								throw new Error('One or more suite errors occurred during testing');
+								message = 'One or more suite errors occurred during testing';
 							}
 							// If there were no run errors but any tests failed, throw an error to reject the run task.
-							if (this._hasTestErrors) {
-								throw new Error('One or more tests failed');
+							else if (this._hasTestErrors) {
+								message = 'One or more tests failed';
+							}
+
+							if (message) {
+								const error: InternError = new Error(message);
+								// Mark this error as reported so that the runner script won't report it again.
+								error.reported = true;
+								throw error;
 							}
 						});
 				}
@@ -529,7 +579,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 		// No loader has been registered, so load the configured or default one
 		else {
 			const config = this.config;
-			const loader = config[this.environment].loader || config.loader;
+			const loader: { [key: string]: any } = config[this.environment].loader || config.loader;
 
 			let script = loader.script;
 			switch (script) {
@@ -540,7 +590,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 					script = `${config.internPath}loaders/${script}.js`;
 			}
 
-			this._loaderConfig = loader!.options || {};
+			this._loaderOptions = loader.options || {};
 			return this.loadScript(script).then(() => {
 				if (!this._loaderInit) {
 					throw new Error(`Loader script ${script} did not register a loader callback`);
@@ -585,6 +635,17 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 	}
 
 	/**
+	 * Load scripts in the `require` list. These will be loaded sequentially in order using a platform-specific loading
+	 * mechanism (script injection or Node's require).
+	 */
+	protected _loadRequires() {
+		const requires = this.config.require.concat(this.config[this.environment].require);
+		return requires.reduce((previous, script) => {
+			return previous.then(() => this.loadScript(script));
+		}, Task.resolve());
+	}
+
+	/**
 	 * Load suites
 	 */
 	protected _loadSuites() {
@@ -625,18 +686,6 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 				this._setOption(name, parseValue(name, value, 'number'));
 				break;
 
-			case 'excludeInstrumentation':
-				if (value === true) {
-					this._setOption(name, value);
-				}
-				else if (typeof value === 'string' || value instanceof RegExp) {
-					this._setOption(name, parseValue(name, value, 'regexp'));
-				}
-				else {
-					throw new Error(`Invalid value "${value}" for ${name}; must be (string | RegExp | true)`);
-				}
-				break;
-
 			case 'grep':
 				this._setOption(name, parseValue(name, value, 'regexp'));
 				break;
@@ -649,6 +698,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 				this._setOption(name, parseValue(name, value, 'object[]', 'script'), addToExisting);
 				break;
 
+			case 'require':
 			case 'suites':
 				this._setOption(name, parseValue(name, value, 'string[]'), addToExisting);
 				break;
@@ -675,6 +725,7 @@ export default abstract class Executor<E extends Events = Events, C extends Conf
 								resource = parseValue('reporters', resource, 'object[]', 'name');
 								this._setOption(name, resource, addToExisting, <C>envConfig);
 								break;
+							case 'require':
 							case 'suites':
 								resource = parseValue('suites', resource, 'string[]');
 								this._setOption(name, resource, addToExisting, <C>envConfig);
@@ -782,6 +833,11 @@ export interface ResourceConfig {
 	 */
 	reporters: ReporterDescriptor[];
 
+	/**
+	 * A list of scripts or modules to load before any loader, plugins, or suites.
+	 */
+	require: string[];
+
 	/** A list of paths to suite scripts (or some other suite identifier usable by the suite loader). */
 	suites: string[];
 }
@@ -813,9 +869,6 @@ export interface Config extends ResourceConfig {
 
 	/** A description for this test run */
 	description: string;
-
-	/** A regexp matching file names that shouldn't be instrumented, or `true` to disable instrumentation. */
-	excludeInstrumentation: true | RegExp;
 
 	/** If true, filter external library calls and runtime calls out of error stacks. */
 	filterErrorStack: boolean;

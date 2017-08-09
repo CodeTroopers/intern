@@ -6,13 +6,12 @@ import { readFileSync } from 'fs';
 import { deepMixin, mixin } from '@dojo/core/lang';
 import ErrorFormatter from '../node/ErrorFormatter';
 import { dirname, normalize, relative, resolve, sep } from 'path';
-import LeadfootServer from 'leadfoot/Server';
+import LeadfootServer from '@theintern/leadfoot/Server';
 import ProxiedSession from '../ProxiedSession';
 import Environment from '../Environment';
 import resolveEnvironments from '../resolveEnvironments';
-import Command from 'leadfoot/Command';
-import Promise from '@dojo/shim/Promise';
-import Tunnel, { TunnelOptions, DownloadProgressEvent } from 'digdug/Tunnel';
+import Command from '@theintern/leadfoot/Command';
+import Tunnel, { TunnelOptions, DownloadProgressEvent } from '@theintern/digdug/Tunnel';
 import Server from '../Server';
 import Suite, { isSuite } from '../Suite';
 import RemoteSuite from '../RemoteSuite';
@@ -21,15 +20,15 @@ import { CoverageMap, createCoverageMap } from 'istanbul-lib-coverage';
 import { createInstrumenter, Instrumenter, readInitialCoverage } from 'istanbul-lib-instrument';
 import { createSourceMapStore, MapStore } from 'istanbul-lib-source-maps';
 import { hookRunInThisContext, hookRequire, unhookRunInThisContext } from 'istanbul-lib-hook';
-import global from '@dojo/core/global';
+import global from '@dojo/shim/global';
 
 // Dig Dug tunnels
-import BrowserStackTunnel, { BrowserStackOptions } from 'digdug/BrowserStackTunnel';
-import SeleniumTunnel, { SeleniumOptions } from 'digdug/SeleniumTunnel';
-import SauceLabsTunnel from 'digdug/SauceLabsTunnel';
-import TestingBotTunnel from 'digdug/TestingBotTunnel';
-import CrossBrowserTestingTunnel from 'digdug/CrossBrowserTestingTunnel';
-import NullTunnel from 'digdug/NullTunnel';
+import BrowserStackTunnel, { BrowserStackOptions } from '@theintern/digdug/BrowserStackTunnel';
+import SeleniumTunnel, { SeleniumOptions } from '@theintern/digdug/SeleniumTunnel';
+import SauceLabsTunnel from '@theintern/digdug/SauceLabsTunnel';
+import TestingBotTunnel from '@theintern/digdug/TestingBotTunnel';
+import CrossBrowserTestingTunnel from '@theintern/digdug/CrossBrowserTestingTunnel';
+import NullTunnel from '@theintern/digdug/NullTunnel';
 
 // Reporters
 import Pretty from '../reporters/Pretty';
@@ -41,6 +40,7 @@ import JsonCoverage from '../reporters/JsonCoverage';
 import HtmlCoverage from '../reporters/HtmlCoverage';
 import Lcov from '../reporters/Lcov';
 import Benchmark from '../reporters/Benchmark';
+import TeamCity from '../reporters/TeamCity';
 
 const console: Console = global.console;
 const process: NodeJS.Process = global.process;
@@ -50,6 +50,7 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 	tunnel: Tunnel;
 
 	protected _coverageMap: CoverageMap;
+	protected _coverageFiles: string[];
 	protected _loadingFunctionalSuites: boolean;
 	protected _instrumentBasePath: string;
 	protected _instrumenter: Instrumenter;
@@ -58,11 +59,11 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 	protected _unhookRequire: null | (() => void);
 	protected _sessionSuites: Suite[];
 
-	constructor(config?: Partial<Config>) {
+	constructor(options?: { [key in keyof Config]?: any }) {
 		super({
 			basePath: process.cwd() + sep,
 			capabilities: { 'idle-timeout': 60 },
-			coverageSources: [],
+			coverage: [],
 			connectTimeout: 30000,
 			environments: [],
 			functionalCoverage: true,
@@ -85,25 +86,26 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 		this._errorFormatter = new ErrorFormatter(this);
 		this._coverageMap = createCoverageMap();
 
-		this.registerPlugin('reporter', 'pretty', () => Pretty);
-		this.registerPlugin('reporter', 'simple', () => Simple);
-		this.registerPlugin('reporter', 'runner', () => Runner);
-		this.registerPlugin('reporter', 'benchmark', () => Benchmark);
-		this.registerPlugin('reporter', 'junit', () => JUnit);
-		this.registerPlugin('reporter', 'jsoncoverage', () => JsonCoverage);
-		this.registerPlugin('reporter', 'htmlcoverage', () => HtmlCoverage);
-		this.registerPlugin('reporter', 'lcov', () => Lcov);
-		this.registerPlugin('reporter', 'cobertura', () => Cobertura);
+		this.registerReporter('pretty', Pretty);
+		this.registerReporter('simple', Simple);
+		this.registerReporter('runner', Runner);
+		this.registerReporter('benchmark', Benchmark);
+		this.registerReporter('junit', JUnit);
+		this.registerReporter('jsoncoverage', JsonCoverage);
+		this.registerReporter('htmlcoverage', HtmlCoverage);
+		this.registerReporter('lcov', Lcov);
+		this.registerReporter('cobertura', Cobertura);
+		this.registerReporter('teamcity', TeamCity);
 
-		this.registerPlugin('tunnel', 'null', () => NullTunnel);
-		this.registerPlugin('tunnel', 'selenium', () => SeleniumTunnel);
-		this.registerPlugin('tunnel', 'saucelabs', () => SauceLabsTunnel);
-		this.registerPlugin('tunnel', 'browserstack', () => BrowserStackTunnel);
-		this.registerPlugin('tunnel', 'testingbot', () => TestingBotTunnel);
-		this.registerPlugin('tunnel', 'cbt', () => CrossBrowserTestingTunnel);
+		this.registerTunnel('null', NullTunnel);
+		this.registerTunnel('selenium', SeleniumTunnel);
+		this.registerTunnel('saucelabs', SauceLabsTunnel);
+		this.registerTunnel('browserstack', BrowserStackTunnel);
+		this.registerTunnel('testingbot', TestingBotTunnel);
+		this.registerTunnel('cbt', CrossBrowserTestingTunnel);
 
-		if (config) {
-			this.configure(config);
+		if (options) {
+			this.configure(options);
 		}
 
 		// Report uncaught errors
@@ -167,6 +169,13 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 	}
 
 	/**
+	 * Retrieve a registered tunnel constructor
+	 */
+	getTunnel(name: string): typeof Tunnel {
+		return this.getPlugin<typeof Tunnel>(`tunnel.${name}`);
+	}
+
+	/**
 	 * Insert coverage instrumentation into a given code string
 	 */
 	instrumentCode(code: string, filename: string): string {
@@ -207,6 +216,13 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 	}
 
 	/**
+	 * Register a tunnel constructor with the plugin system. It can be retrieved later with getTunnel or getPlugin.
+	 */
+	registerTunnel(name: string, Ctor: typeof Tunnel) {
+		this.registerPlugin('tunnel', name, () => Ctor);
+	}
+
+	/**
 	 * Return true if a given file should be instrumented based on the current config
 	 */
 	shouldInstrumentFile(filename: string) {
@@ -217,7 +233,19 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 
 		const basePath = this._instrumentBasePath;
 		filename = normalizePath(filename);
-		return filename.indexOf(basePath) === 0 && !excludeInstrumentation.test(filename.slice(basePath.length));
+		if (filename.indexOf(basePath) !== 0) {
+			return false;
+		}
+
+		if (excludeInstrumentation && !excludeInstrumentation.test(filename.slice(basePath.length))) {
+			return false;
+		}
+
+		if (this._coverageFiles && this._coverageFiles.indexOf(filename) === -1) {
+			return false;
+		}
+
+		return true;
 	}
 
 	protected _afterRun() {
@@ -292,7 +320,7 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 							options.servers.push(config.serverUrl);
 						}
 
-						let TunnelConstructor = this.getPlugin<typeof Tunnel>(`tunnel.${config.tunnel}`);
+						let TunnelConstructor = this.getTunnel(config.tunnel);
 						const tunnel = this.tunnel = new TunnelConstructor(this.config.tunnelOptions);
 
 						tunnel.on('downloadprogress', progress => {
@@ -313,6 +341,8 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 						return false;
 					});
 			}
+
+			return false;
 		});
 	}
 
@@ -405,7 +435,7 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 				});
 
 				// If browser-compatible unit tests were added to this executor, add a RemoteSuite to the session suite.
-				// The RemoteSuite will run the suites listed in executor.config.suites.
+				// The RemoteSuite will run the suites listed in config.suites and config.browser.suites.
 				if (config.suites.length + config.browser.suites.length > 0) {
 					suite.add(new RemoteSuite({
 						before() {
@@ -459,6 +489,22 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 				this._setOption(name, parseValue(name, value, 'object[]', 'browserName'), addToExisting);
 				break;
 
+			case 'excludeInstrumentation':
+				this.emit('deprecated', {
+					original: 'excludeInstrumentation',
+					replacement: 'coverage'
+				});
+				if (value === true) {
+					this._setOption(name, value);
+				}
+				else if (typeof value === 'string' || value instanceof RegExp) {
+					this._setOption(name, parseValue(name, value, 'regexp'));
+				}
+				else {
+					throw new Error(`Invalid value "${value}" for ${name}; must be (string | RegExp | true)`);
+				}
+				break;
+
 			case 'tunnel':
 				this._setOption(name, parseValue(name, value, 'string'));
 				break;
@@ -470,7 +516,7 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 				this._setOption(name, parseValue(name, value, 'boolean'));
 				break;
 
-			case 'coverageSources':
+			case 'coverage':
 			case 'functionalSuites':
 				this._setOption(name, parseValue(name, value, 'string[]'), addToExisting);
 				break;
@@ -510,6 +556,12 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 			}
 
 			this._instrumentBasePath = normalizePath(`${resolve(config.basePath || '')}${sep}`);
+			this._coverageFiles = [];
+
+			if (config.coverage) {
+				// Coverage file entries should be absolute paths
+				this._coverageFiles = expandFiles(config.coverage).map(path => resolve(path));
+			}
 
 			config.serverUrl = config.serverUrl.replace(/\/*$/, '/');
 
@@ -597,10 +649,9 @@ export default class Node extends Executor<Events, Config, NodePlugins> {
 				}
 			})
 			.finally(() => {
-				// If coverageSources is set, generate initial coverage data for files with no coverage results
+				// If coverage is set, generate initial coverage data for files with no coverage results
 				const filesWithCoverage = this._coverageMap.files();
-				expandFiles(this.config.coverageSources)
-					.map(path => resolve(path))
+				this._coverageFiles
 					.filter(path => filesWithCoverage.indexOf(path) === -1)
 					.forEach(filename => {
 						const code = readFileSync(filename, { encoding: 'utf8' });
@@ -648,12 +699,16 @@ export interface Config extends BaseConfig {
 	connectTimeout: number;
 
 	/**
-	 * If set, coverage will be collected for all files. This allows uncovered files to be noticed more easily.
+	 * A list of globs denoting which files coverage data should be collected for. Files may be excluded by prefixing an
+	 * expression with '!'.
 	 */
-	coverageSources: string[];
+	coverage: string[];
 
 	/** A list of remote environments */
 	environments: EnvironmentSpec[];
+
+	/** A regexp matching file names that shouldn't be instrumented, or `true` to disable instrumentation. */
+	excludeInstrumentation: true | RegExp;
 
 	/** If true, collect coverage data from functional tests */
 	functionalCoverage: boolean;

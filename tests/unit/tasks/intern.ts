@@ -1,9 +1,7 @@
 import _gruntTask from 'src/tasks/intern';
 import { spy, stub } from 'sinon';
-import global from '@dojo/core/global';
 
 const mockRequire = intern.getPlugin<mocking.MockRequire>('mockRequire');
-const originalIntern = global.intern;
 
 registerSuite('tasks/intern', function () {
 	const mockDone = stub();
@@ -33,7 +31,8 @@ registerSuite('tasks/intern', function () {
 	return {
 		before() {
 			return mockRequire(require, 'src/tasks/intern', {
-				'src/lib/executors/Node': { default: MockNode }
+				'src/lib/executors/Node': { default: MockNode },
+				'@dojo/shim/global': { default: {} }
 			}).then(handle => {
 				removeMocks = handle.remove;
 				gruntTask = handle.module;
@@ -42,7 +41,6 @@ registerSuite('tasks/intern', function () {
 
 		after() {
 			removeMocks();
-			global.intern = originalIntern;
 		},
 
 		beforeEach() {

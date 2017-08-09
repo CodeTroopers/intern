@@ -1,4 +1,5 @@
 import _WebSocket from 'src/lib/channels/WebSocket';
+import { useFakeTimers, SinonFakeTimers } from 'sinon';
 
 const mockRequire = intern.getPlugin<mocking.MockRequire>('mockRequire');
 
@@ -21,11 +22,12 @@ registerSuite('lib/channels/WebSocket', function () {
 	let removeMocks: () => void;
 	let eventListeners: { [name: string]: ((event: any) => void)[] };
 	let sentData: string[];
+	let clock: SinonFakeTimers;
 
 	return {
 		before() {
 			return mockRequire(require, 'src/lib/channels/WebSocket', {
-				'@dojo/core/global': { default: { WebSocket: MockWebSocket } }
+				'@dojo/shim/global': { default: { WebSocket: MockWebSocket } }
 			}).then(handle => {
 				removeMocks = handle.remove;
 				WebSocket = handle.module.default;
@@ -39,6 +41,11 @@ registerSuite('lib/channels/WebSocket', function () {
 		beforeEach() {
 			eventListeners = {};
 			sentData = [];
+			clock = useFakeTimers();
+		},
+
+		afterEach() {
+			clock.restore();
 		},
 
 		tests: {

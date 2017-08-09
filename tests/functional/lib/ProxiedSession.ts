@@ -1,11 +1,12 @@
 import ProxiedSession from 'src/lib/ProxiedSession';
-import Server from 'leadfoot/Server';
-import Promise from '@dojo/shim/Promise';
+import Server from '@theintern/leadfoot/Server';
 import { Remote } from 'src/lib/executors/Node';
 import Task from '@dojo/core/async/Task';
 
 // Bring in Test and TestFunction from testing src rather than the src being tested
 import Test, { TestFunction } from '../../../src/lib/Test';
+import registerSuite from '../../../src/lib/interfaces/object';
+import { assert } from 'chai';
 
 registerSuite('ProxiedSession', function () {
 	const serverUrl = 'https://example.invalid/';

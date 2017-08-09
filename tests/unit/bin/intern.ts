@@ -1,7 +1,9 @@
 import Task from '@dojo/core/async/Task';
 import { stub, SinonStub, spy, SinonSpy } from 'sinon';
+import global from '@dojo/shim/global';
 
 const mockRequire = intern.getPlugin<mocking.MockRequire>('mockRequire');
+const originalIntern = global.intern;
 
 registerSuite('bin/intern', function () {
 	const mockNodeUtil: { [name: string]: SinonSpy } = {
@@ -46,6 +48,7 @@ registerSuite('bin/intern', function () {
 			}
 
 			process.exitCode = originalExitCode;
+			global.intern = originalIntern;
 		},
 
 		tests: {
@@ -89,7 +92,7 @@ registerSuite('bin/intern', function () {
 						'src/lib/node/util': mockNodeUtil,
 						'src/lib/common/util': mockCommonUtil,
 						'src/index': { default: () => {} },
-						'@dojo/core/global': { default: { process: {} } }
+						'@dojo/shim/global': { default: { process: {} } }
 					}).then(handle => {
 						removeMocks = handle.remove;
 						assert.equal(logStub!.callCount, 0, 'expected error not to be called');
@@ -109,7 +112,7 @@ registerSuite('bin/intern', function () {
 						'src/lib/node/util': mockNodeUtil,
 						'src/lib/common/util': mockCommonUtil,
 						'src/index': { default: () => {} },
-						'@dojo/core/global': { default: { process: { stdout: process.stdout } } }
+						'@dojo/shim/global': { default: { process: { stdout: process.stdout } } }
 					}).then(handle => {
 						removeMocks = handle.remove;
 						return messageLogged;

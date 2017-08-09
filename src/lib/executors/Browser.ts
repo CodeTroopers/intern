@@ -2,7 +2,7 @@ import Executor, { Config, Events } from './Executor';
 import { normalizePathEnding } from '../common/util';
 import { RuntimeEnvironment } from '../types';
 import Task from '@dojo/core/async/Task';
-import global from '@dojo/core/global';
+import global from '@dojo/shim/global';
 
 // Reporters
 import Html from '../reporters/Html';
@@ -15,7 +15,7 @@ const console: Console = global.console;
  * A Browser executor is used to run unit tests in a browser.
  */
 export default class Browser extends Executor<Events, Config> {
-	constructor(config?: Partial<Config>) {
+	constructor(options?: { [key in keyof Config]?: any }) {
 		super(<Config>{
 			basePath: '/',
 			internPath: 'node_modules/intern/'
@@ -34,12 +34,12 @@ export default class Browser extends Executor<Events, Config> {
 			this.emit('error', error);
 		});
 
-		this.registerPlugin('reporter', 'html', () => Html);
-		this.registerPlugin('reporter', 'dom', () => Dom);
-		this.registerPlugin('reporter', 'console', () => ConsoleReporter);
+		this.registerReporter('html', Html);
+		this.registerReporter('dom', Dom);
+		this.registerReporter('console', ConsoleReporter);
 
-		if (config) {
-			this.configure(config);
+		if (options) {
+			this.configure(options);
 		}
 	}
 

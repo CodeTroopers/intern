@@ -168,6 +168,12 @@ registerSuite('lib/executors/Node', function () {
 		}
 	};
 
+	class MockRemoteSuite {
+		hasParent = true;
+		tests = [];
+		run() { return Task.resolve(); }
+	}
+
 	let executor: _Node;
 	let reporters: MockReporter[];
 	let tunnels: MockTunnel[];
@@ -196,7 +202,7 @@ registerSuite('lib/executors/Node', function () {
 				'chai': mockChai,
 				'path': mockPath,
 				'fs': mockFs,
-				'@dojo/core/global': { default: mockGlobal },
+				'@dojo/shim/global': { default: mockGlobal },
 				'src/lib/reporters/Pretty': { default: MockReporter },
 				'src/lib/reporters/Runner': { default: MockReporter },
 				'src/lib/reporters/Simple': { default: MockReporter },
@@ -233,11 +239,12 @@ registerSuite('lib/executors/Node', function () {
 						return ['foo env'];
 					}
 				},
-				'leadfoot/Command': { default: MockCommand },
-				'leadfoot/Server': { default: MockLeadfootServer },
-				'digdug/NullTunnel': { default: MockTunnel },
-				'digdug/BrowserStackTunnel': { default: MockTunnel },
+				'@theintern/leadfoot/Command': { default: MockCommand },
+				'@theintern/leadfoot/Server': { default: MockLeadfootServer },
+				'@theintern/digdug/NullTunnel': { default: MockTunnel },
+				'@theintern/digdug/BrowserStackTunnel': { default: MockTunnel },
 				'src/lib/ProxiedSession': { default: MockSession },
+				'src/lib/RemoteSuite': { default: MockRemoteSuite },
 				'src/lib/executors/Executor': null
 			}).then(handle => {
 				removeMocks = handle.remove;
@@ -321,8 +328,8 @@ registerSuite('lib/executors/Node', function () {
 			},
 
 			'#configure': (() => {
-				function test(name: keyof Config, badValue: any, goodValue: any, expectedValue: any, error: RegExp, message?: string) {
-					testProperty<_Node, Config>(executor, mockConsole, name, badValue, goodValue, expectedValue, error, message);
+				function test(name: keyof Config, badValue: any, goodValue: any, expectedValue: any, error: RegExp, allowDeprecated?: boolean | string, message?: string) {
+					testProperty<_Node, Config>(executor, mockConsole, name, badValue, goodValue, expectedValue, error, allowDeprecated, message);
 				}
 
 				const booleanTest = (name: keyof Config) => () => { test(name, 5, 'true', true, /Non-boolean/); };
@@ -349,12 +356,18 @@ registerSuite('lib/executors/Node', function () {
 						test('tunnel', 5, 'null', 'null', /Non-string/);
 					},
 
+					excludeInstrumentation() {
+						test('excludeInstrumentation', 5, true, true, /Invalid value/, true);
+						test('excludeInstrumentation', 5, /foo/, /foo/, /Invalid value/, true);
+						test('excludeInstrumentation', 5, 'foo', /foo/, /Invalid value/, true);
+					},
+
 					functionalCoverage: booleanTest('functionalCoverage'),
 					leaveRemoteOpen: booleanTest('leaveRemoteOpen'),
 					serveOnly: booleanTest('serveOnly'),
 					runInSync: booleanTest('runInSync'),
 
-					coverageSources: stringArrayTest('coverageSources'),
+					coverage: stringArrayTest('coverage'),
 					functionalSuites: stringArrayTest('functionalSuites'),
 
 					connectTimeout: numberTest('connectTimeout'),
@@ -430,7 +443,7 @@ registerSuite('lib/executors/Node', function () {
 					const dfd = this.async();
 					executor.configure({ basePath: 'bar' });
 					executor.on('beforeRun', dfd.callback(() => {
-						assert.isTrue(executor.shouldInstrumentFile('bar/foo.js'));
+						assert.isFalse(executor.shouldInstrumentFile('bar/foo.js'));
 					}));
 					executor.run();
 				},
@@ -526,7 +539,7 @@ registerSuite('lib/executors/Node', function () {
 						environments: 'chrome',
 						tunnel: 'null',
 						suites: 'foo.js',
-						coverageSources: ['foo.js']
+						coverage: ['foo.js']
 					});
 					return executor.run().then(() => {
 						assert.lengthOf(coverageMaps, 1);
